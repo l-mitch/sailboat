@@ -7,6 +7,7 @@ Date: Nov-2025
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+from matplotlib.animation import FuncAnimation
 
 # Fixing the working directory for my laptop.
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -53,7 +54,7 @@ def calculate_aerodynamic_forces(vx, vy, theta, beta_sail):
     Parameters
     ----------
     vx, vy : float
-        Vessel velocity components (m/s)
+        Vessel x and y velocity components (m/s)
     theta : float  
         Vessel heading (radians)
     beta_sail : float
@@ -65,10 +66,10 @@ def calculate_aerodynamic_forces(vx, vy, theta, beta_sail):
         Aerodynamic force components in global coordinates (N)
     """
     # Apparent wind calculation
-    v_wind_true = np.array([-6.7, 0])  # Wind from East at 6.7 m/s
+    v_wind_true = np.array([-6.7, 0])  # Wind from East at 6.7 m/s as given in brief
     v_boat = np.array([vx, vy])
     v_wind_app = v_wind_true - v_boat
-    v_app_mod = np.linalg.norm(v_wind_app)  # Apparent wind speed
+    v_app_mod = np.linalg.norm(v_wind_app)  # Apparent wind speed magnitude
     
     # Check for zero wind to avoid division issues
     if v_app_mod < 0.001:
@@ -83,10 +84,10 @@ def calculate_aerodynamic_forces(vx, vy, theta, beta_sail):
     alpha = (alpha + np.pi) % (2 * np.pi) - np.pi  # Normalize to [-π, π]
     
     # Aerodynamic coefficients
-    A = 15
-    rho = 1.225  # Air density (kg/m³)
-    C_D = 1 - np.cos(2 * alpha)
-    C_L = 1.5 * np.sin(2 * alpha + 0.5 * np.sin(2 * alpha))
+    A = 15                                                   # Sail area (m²)
+    rho = 1.225                                              # Air density (kg/m³)
+    C_D = 1 - np.cos(2 * alpha)                              # Drag coefficient as given in brief
+    C_L = 1.5 * np.sin(2 * alpha + 0.5 * np.sin(2 * alpha))  # Lift coefficient as given in brief
     
     # Aerodynamic calculations
     q = 0.5 * rho * v_app_mod**2
@@ -94,7 +95,7 @@ def calculate_aerodynamic_forces(vx, vy, theta, beta_sail):
     lift_force = q * A * C_L
     
     # Convert to global coordinates 
-    drag_dir = wind_dir + np.pi  # Drag opposite to wind direction
+    drag_dir = wind_dir + np.pi    # Drag opposite to wind direction
     lift_dir = wind_dir - np.pi/2  # Lift perpendicular to wind
     
     F_drag_x = drag_force * np.cos(drag_dir)
@@ -204,6 +205,43 @@ def solve_ivp(state_deriv, t0, tmax, dt, z0):
     
     return t, z
 
+def animate_trajectory(t, z):
+    """
+    Create an animation of the sail drone trajectory.
+    """
+    
+    x, y, theta, vx, vy, omega = z
+    
+    fig, ax = plt.subplots(figsize=(10, 8))
+    ax.set_xlim(np.min(x)-10, np.max(x)+10)
+    ax.set_ylim(np.min(y)-10, np.max(y)+10)
+    ax.set_xlabel('East Position (m)')
+    ax.set_ylabel('North Position (m)')
+    ax.set_title('Sail Drone Navigation - Real Time')
+    ax.grid(True, alpha=0.3)
+    
+    # Plot full trajectory
+    trajectory, = ax.plot([], [], 'b-', alpha=0.5, linewidth=1)
+    drone, = ax.plot([], [], 'ro', markersize=8)
+    heading, = ax.plot([], [], 'r-', linewidth=2)
+    
+    def update(frame):
+        trajectory.set_data(x[:frame], y[:frame])
+        drone.set_data(x[frame], y[frame])
+        
+        # Show heading direction
+        arrow_length = 5
+        heading_x = [x[frame], x[frame] + arrow_length * np.cos(theta[frame])]
+        heading_y = [y[frame], y[frame] + arrow_length * np.sin(theta[frame])]
+        heading.set_data(heading_x, heading_y)
+        
+        return trajectory, drone, heading
+    
+    anim = FuncAnimation(fig, update, frames=len(t), interval=50, blit=True, repeat=False)
+    plt.show()
+    
+    return anim
+
 def simulate_saildrone():
     """
     Run the complete sail drone simulation and plot results.
@@ -233,68 +271,13 @@ def simulate_saildrone():
     vx_traj = z[3, :]   # x-velocity over time
     vy_traj = z[4, :]   # y-velocity over time
     omega_traj = z[5, :] # angular velocity over time
-    
-    # Plot the trajectory
-    plt.figure(figsize=(15, 10))
-    
-    # Main trajectory plot
-    plt.subplot(2, 2, 1)
-    plt.plot(x_traj, y_traj, 'b-', linewidth=2)
-    plt.xlabel('East Position (m)')
-    plt.ylabel('North Position (m)')
-    plt.title('Sail Drone Trajectory - A-B-C Course')
-    plt.grid(True, alpha=0.3)
-    plt.axis('equal')
-    
-    # Mark the control change points
-    control_times = [0, 60, 65, tmax]
-    for t_ctrl in control_times:
-        idx = np.argmin(np.abs(t - t_ctrl))
-        if idx < len(x_traj):
-            plt.plot(x_traj[idx], y_traj[idx], 'ro', markersize=8)
-            plt.text(x_traj[idx], y_traj[idx], f'  t={t_ctrl}s', fontsize=8)
-    
-    # Heading vs time
-    plt.subplot(2, 2, 2)
-    plt.plot(t, np.degrees(theta_traj), 'r-', linewidth=2)
-    plt.xlabel('Time (s)')
-    plt.ylabel('Heading (degrees)')
-    plt.title('Drone Heading vs Time')
-    plt.grid(True, alpha=0.3)
-    
-    # Velocity components
-    plt.subplot(2, 2, 3)
-    speed = np.sqrt(vx_traj**2 + vy_traj**2)
-    plt.plot(t, vx_traj, 'g-', label='Vx (East)')
-    plt.plot(t, vy_traj, 'm-', label='Vy (North)')
-    plt.plot(t, speed, 'k-', label='Speed', linewidth=2)
-    plt.xlabel('Time (s)')
-    plt.ylabel('Velocity (m/s)')
-    plt.title('Velocity Components')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    
-    # Control inputs over time
-    plt.subplot(2, 2, 4)
-    sail_angles = []
-    rudder_angles = []
-    for time in t:
-        beta_sail, beta_rudder = get_control_inputs(time)
-        sail_angles.append(np.degrees(beta_sail))
-        rudder_angles.append(np.degrees(beta_rudder))
-    
-    plt.plot(t, sail_angles, 'orange', linewidth=2, label='Sail Angle')
-    plt.plot(t, rudder_angles, 'purple', linewidth=2, label='Rudder Angle')
-    plt.xlabel('Time (s)')
-    plt.ylabel('Angle (degrees)')
-    plt.title('Control Inputs')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    
-    plt.show()
+
+    # Draw trajectory
+    animate_trajectory(t,z)
+
     print(f"Final position: ({x_traj[-1]:.1f}, {y_traj[-1]:.1f}) m")
     print(f"Final heading: {np.degrees(theta_traj[-1]):.1f}°")
-    print(f"Final speed: {speed[-1]:.1f} m/s")
+    print(f"Final speed: {speed[-1]:.1f} m/s") 
 
 # Run the simulation
 if __name__ == '__main__':
